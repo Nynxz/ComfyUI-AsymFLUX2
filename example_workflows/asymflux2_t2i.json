@@ -116,7 +116,7 @@
         { "name": "LATENT", "type": "LATENT", "links": [7] }
       ],
       "properties": {},
-      "widgets_values": [42, "fixed", 38, 4.0, "dpmpp_2m_sde", "simple", 1.0]
+      "widgets_values": [42, "fixed", 38, 4.0, "dpmpp_2m", "simple", 1.0]
     },
     {
       "id": 8,
