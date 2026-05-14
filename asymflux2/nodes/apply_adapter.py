@@ -1,26 +1,27 @@
 """AsymFLUX2 Apply Adapter — takes a ``MODEL`` loaded from a stock
 ``Load Diffusion Model`` (a FLUX.2-klein-base-9B safetensors) plus an
 adapter ``.safetensors`` from ``models/loras/`` (the AsymFLUX.2-klein
-adapter), and returns a patched ``MODEL`` that can be driven by a
-stock ``KSampler`` against an AsymFLUX2 Empty Pixel Latent.
+adapter), and returns a patched ``MODEL`` that can be driven by a stock
+``KSampler`` against an AsymFLUX2 Empty Pixel Latent.
 
-The node performs the input/output projection swap, registers the
-``proj_buffer`` / ``scale_buffer``, wraps the diffusion model with the
-AsymFlow calibration + velocity, applies the rank-256 LoRA, sets a
-flux-shift of 17, and disables the per-VAE latent rescale (pixel-space).
+Everything is installed via ``ModelPatcher.add_object_patch`` so the
+base FLUX.2-klein model is never mutated; the patches apply when the
+returned MODEL is loaded and revert when it is unloaded.
 """
 
 from __future__ import annotations
 
+import os
+
 import torch
 from comfy_api.latest import io
+from safetensors import safe_open
 
 import comfy.lora
 import comfy.sd
-import comfy.utils
 import folder_paths
-from safetensors import safe_open
 
+from .. import log
 from ..model.surgery import (
     apply_asymflux2_surgery,
     make_latent_passthrough,
@@ -30,24 +31,65 @@ from ..model.surgery import (
 )
 
 
+# Adapter state-dict prefix used by the upstream lakonlab diffusers pipeline.
 _ADAPTER_PREFIX = "transformer."
 
 # AsymFLUX.2 ships its timestep-embedder LoRAs under
-# ``time_guidance_embed.timestep_embedder.*`` (a LakonLab-specific module
+# ``time_guidance_embed.timestep_embedder.*`` (LakonLab-specific module
 # name), but comfy's ``flux_to_diffusers`` key map only knows about
 # ``time_text_embed.timestep_embedder.*`` (the stock diffusers-flux name
-# for the SAME underlying ``time_in`` MLP in comfy). We rewrite the
-# adapter's diffusers-side names so comfy can match them.
+# for the same underlying ``time_in`` MLP). We rewrite the adapter's
+# diffusers-side names so comfy can match them.
 _DIFFUSERS_KEY_RENAMES = {
     "time_guidance_embed.timestep_embedder.": "time_text_embed.timestep_embedder.",
 }
 
 
-# Module-level cache for the adapter state dict. Comfy may re-execute
-# Apply Adapter when MODEL identity changes (model swap, dynamic-VRAM
-# reload, etc.). Without caching, every re-execution reads ~707 MB from
-# disk. Keyed by (path, mtime) so editing/replacing the file invalidates.
-_ADAPTER_CACHE: dict[tuple[str, float], dict[str, torch.Tensor]] = {}
+# --- Module-level caches ---------------------------------------------
+# Both keyed by (path, mtime) so editing/replacing the adapter file
+# invalidates. Adapter files are immutable in practice, so once cached
+# subsequent Apply Adapter executions in the same Comfy session pay only
+# the cost of cloning the patcher + registering object_patches.
+
+# Raw adapter state dict (skip the 707 MB disk read on re-execute).
+_ADAPTER_SD_CACHE: dict[tuple[str, float], dict[str, torch.Tensor]] = {}
+
+# Split state dict (skip the 121-key walk + rename pass on re-execute).
+_ADAPTER_SPLIT_CACHE: dict[
+    tuple[str, float],
+    tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]],
+] = {}
+
+
+def _cache_key(path: str) -> tuple[str, float]:
+    try:
+        return (path, os.path.getmtime(path))
+    except OSError:
+        return (path, 0.0)
+
+
+def _load_adapter_safetensors(path: str) -> tuple[dict[str, torch.Tensor], bool]:
+    """Read a safetensors file fully into CPU memory.
+
+    We open it ourselves rather than going through ``comfy.utils.load_torch_file``
+    because that dispatches through the forked memory-management loader on
+    aimdo-enabled builds and uses mmap on stock builds — both have been
+    observed to segfault when the file sits on an external USB filesystem.
+    ``.clone()`` on every tensor detaches from any underlying mmap.
+
+    Returns ``(state_dict, cache_hit)``.
+    """
+    key = _cache_key(path)
+    cached = _ADAPTER_SD_CACHE.get(key)
+    if cached is not None:
+        return cached, True
+
+    sd: dict[str, torch.Tensor] = {}
+    with safe_open(path, framework="pt", device="cpu") as f:
+        for k in f.keys():
+            sd[k] = f.get_tensor(k).clone()
+    _ADAPTER_SD_CACHE[key] = sd
+    return sd, False
 
 
 def _remap_diffusers_keys(k: str) -> str:
@@ -57,59 +99,51 @@ def _remap_diffusers_keys(k: str) -> str:
     return k
 
 
-def _log(msg: str) -> None:
-    print(f"[AsymFLUX2] {msg}", flush=True)
-
-
-def _load_adapter_safetensors(path: str) -> dict[str, torch.Tensor]:
-    """Read a safetensors file fully into CPU memory, *without* relying on
-    comfy.utils.load_torch_file. That function dispatches through the
-    forked memory-management loader on aimdo-enabled builds and uses mmap
-    on stock builds — both have been observed to segfault when the file
-    sits on an external USB filesystem. We open it ourselves and call
-    ``.clone()`` on every tensor to detach from any underlying mmap.
-
-    Result is cached by (path, mtime) so re-executions of the node only
-    pay the disk read once per Comfy session.
-    """
-    import os
-    try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        mtime = 0.0
-    key = (path, mtime)
-    if key in _ADAPTER_CACHE:
-        return _ADAPTER_CACHE[key]
-
-    sd: dict[str, torch.Tensor] = {}
-    with safe_open(path, framework="pt", device="cpu") as f:
-        for k in f.keys():
-            sd[k] = f.get_tensor(k).clone()
-    _ADAPTER_CACHE[key] = sd
-    return sd
-
-
-def _split_adapter_state_dict(sd: dict[str, torch.Tensor]) -> tuple[dict, dict]:
+def _split_adapter_state_dict(
+    sd: dict[str, torch.Tensor], cache_key: tuple[str, float],
+) -> tuple[dict, dict]:
     """Split adapter state dict into (overwrites, lora). Strips
-    ``transformer.`` prefix from both, matching how lakonlab's
-    ``load_lakonlab_adapter`` interprets them. Also rewrites diffusers-side
-    LoRA names where AsymFLUX2 disagrees with stock diffusers (currently:
-    ``time_guidance_embed -> time_text_embed`` on the timestep MLP).
+    ``transformer.`` prefix and rewrites the timestep-embedder LoRA names
+    so comfy's diffusers-flux key map can match them.
+
+    Cached by adapter file identity.
     """
+    cached = _ADAPTER_SPLIT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     overwrites: dict[str, torch.Tensor] = {}
     lora: dict[str, torch.Tensor] = {}
     for k, v in sd.items():
         kk = k.removeprefix(_ADAPTER_PREFIX) if k.startswith(_ADAPTER_PREFIX) else k
         if "lora" in kk.lower():
             kk = _remap_diffusers_keys(kk)
-            # diffusers-style lora keys come pre-prefixed with `transformer.`
-            # comfy's diffusers->flux key map expects that prefix back when
-            # the lora is matched via the model's hidden_size.
-            lora_key = f"{_ADAPTER_PREFIX}{kk}"
-            lora[lora_key] = v
+            # diffusers-style lora keys carry the `transformer.` prefix;
+            # comfy's diffusers->flux key map expects it.
+            lora[f"{_ADAPTER_PREFIX}{kk}"] = v
         else:
             overwrites[kk] = v
+
+    _ADAPTER_SPLIT_CACHE[cache_key] = (overwrites, lora)
     return overwrites, lora
+
+
+def _check_lora_resolves(model_patcher, lora_sd: dict[str, torch.Tensor]) -> None:
+    """Diagnostic: warn if any LoRA stems won't match comfy's key map.
+    Silent on the happy path (all match)."""
+    key_map = comfy.lora.model_lora_keys_unet(model_patcher.model, {})
+    stems: set[str] = set()
+    for k in lora_sd:
+        if k.endswith(".lora_A.weight"):
+            stems.add(k[: -len(".lora_A.weight")])
+        elif k.endswith(".lora_B.weight"):
+            stems.add(k[: -len(".lora_B.weight")])
+    unmatched = sorted(stems - set(key_map.keys()))
+    if unmatched:
+        log(
+            f"WARNING: {len(unmatched)}/{len(stems)} LoRA stems will not match "
+            f"comfy's key map and will silently no-op. First 5: {unmatched[:5]}"
+        )
 
 
 class AsymFlux2ApplyAdapter(io.ComfyNode):
@@ -126,9 +160,10 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
                 "Turns a stock FLUX.2-klein-base-9B MODEL into AsymFLUX.2. "
                 "Drop the adapter (Lakonik/AsymFLUX.2-klein-9B "
                 "diffusion_pytorch_model.safetensors, ~707 MB) into "
-                "ComfyUI/models/loras/. Then chain: Load Diffusion Model -> "
-                "this node -> KSampler. Use AsymFLUX2 Empty Pixel Latent for "
-                "the latent input, and AsymFLUX2 Oklab Decode for the output."
+                "ComfyUI/models/loras/. Chain: Load Diffusion Model -> "
+                "this node -> KSampler. Use AsymFLUX2 Empty Pixel Latent "
+                "for the latent input, AsymFLUX2 Oklab Decode after the "
+                "sampler."
             ),
             inputs=[
                 io.Model.Input(
@@ -143,43 +178,28 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
                 io.Float.Input(
                     "shift",
                     default=17.0, min=0.1, max=100.0, step=0.1,
-                    tooltip=(
-                        "Flux-style time shift. 17.0 matches the static "
-                        "shift in the upstream FlowAdapterScheduler "
-                        "default."
-                    ),
+                    tooltip="Flow shift (paper convention; converted to comfy mu = log(shift) internally).",
                 ),
                 io.Float.Input(
                     "adapter_strength",
                     default=1.0, min=-2.0, max=2.0, step=0.01,
-                    tooltip=(
-                        "LoRA strength applied to the AsymFlow rank-256 "
-                        "LoRA. 1.0 = full strength."
-                    ),
+                    tooltip="LoRA strength applied to the rank-256 LoRA. 1.0 = full strength.",
                 ),
                 io.Float.Input(
                     "orthogonal_guidance",
                     default=1.0, min=0.0, max=2.0, step=0.05,
                     tooltip=(
-                        "AsymFlow orthogonal CFG bias strength. 1.0 "
-                        "matches the upstream demo default (removes the "
-                        "component of the CFG bias parallel to the "
-                        "current x0 estimate -- significantly sharpens "
-                        "detail). 0.0 = standard CFG. Try 0.5 if output "
-                        "looks oversharpened."
+                        "AsymFlow orthogonal CFG bias strength. 1.0 = "
+                        "upstream demo default. 0.0 = standard CFG."
                     ),
                 ),
                 io.Boolean.Input(
                     "clamp_denoised",
                     default=True,
                     tooltip=(
-                        "Per-step Oklab gamut clamp on the x0 estimate "
-                        "(upstream `clamp_denoised=True` default). At "
-                        "every step the predicted x0 is decoded to RGB, "
-                        "clipped to [-1, 1], and re-encoded back to "
-                        "Oklab. Prevents x0 drift out of valid color "
-                        "space; expect noticeably better color "
-                        "stability and slightly sharper output."
+                        "Per-step Oklab gamut clamp on the x0 estimate. "
+                        "Prevents color drift across the sampling loop. "
+                        "Disable if using uni_pc — see README."
                     ),
                 ),
             ],
@@ -199,32 +219,20 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
         clamp_denoised: bool,
     ) -> io.NodeOutput:
         adapter_path = folder_paths.get_full_path_or_raise("loras", adapter)
-        import os
+        key = _cache_key(adapter_path)
+
         try:
-            cache_key = (adapter_path, os.path.getmtime(adapter_path))
-        except OSError:
-            cache_key = (adapter_path, 0.0)
-        cache_hit = cache_key in _ADAPTER_CACHE
-        _log(f"loading adapter from {adapter_path}{' [CACHED]' if cache_hit else ''}")
-        try:
-            adapter_sd = _load_adapter_safetensors(adapter_path)
+            adapter_sd, cache_hit = _load_adapter_safetensors(adapter_path)
         except Exception as e:
             raise RuntimeError(
                 f"AsymFLUX2: failed to read adapter safetensors at {adapter_path}: {e!r}. "
-                "If the file lives on an external drive, copy it to your local disk "
-                "and retry."
+                "If the file lives on an external drive, copy it to local disk and retry."
             ) from e
-        _log(f"adapter loaded: {len(adapter_sd)} tensors")
+        log(f"adapter {adapter_path}{' [CACHED]' if cache_hit else ''} ({len(adapter_sd)} tensors)")
 
-        overwrites, lora_sd = _split_adapter_state_dict(adapter_sd)
-        _log(f"split adapter into {len(overwrites)} overwrites + {len(lora_sd)} lora tensors")
+        overwrites, lora_sd = _split_adapter_state_dict(adapter_sd, key)
 
-        required = {
-            "x_embedder.weight",
-            "proj_out.weight",
-            "proj_buffer",
-            "scale_buffer",
-        }
+        required = {"x_embedder.weight", "proj_out.weight", "proj_buffer", "scale_buffer"}
         missing = required - set(overwrites.keys())
         if missing:
             raise RuntimeError(
@@ -232,50 +240,19 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
                 "Make sure you picked the AsymFLUX.2-klein-9B adapter."
             )
 
-        _log("cloning model patcher")
         m = model.clone()
-
-        _log("applying model surgery (object_patches; base model unchanged)")
         apply_asymflux2_surgery(m, overwrites)
-        _log("surgery complete")
 
-        # Apply the LoRA via comfy's standard machinery. comfy.sd.load_lora_for_models
-        # routes through model_lora_keys_unet, which recognises a Flux model and
-        # converts diffusers-naming keys ("transformer_blocks.X.attn.to_out.lora_A...")
-        # to comfy's internal keys.
         if lora_sd:
-            _log(f"applying {len(lora_sd) // 2} LoRA pairs at strength {adapter_strength}")
-
-            # Sniff-check: build the same key_map comfy would, and see how many of
-            # our LoRA keys actually resolve to a comfy-side parameter. If this is
-            # 0 the LoRA silently no-ops and we ship vanilla FLUX.2 attention/ff
-            # behaviour with an AsymFLUX2 input/output projection — produces
-            # "rainbow grid" / black output.
-            key_map = comfy.lora.model_lora_keys_unet(m.model, {})
-            lora_stems = set()
-            for k in lora_sd.keys():
-                if k.endswith(".lora_A.weight"):
-                    lora_stems.add(k[: -len(".lora_A.weight")])
-                elif k.endswith(".lora_B.weight"):
-                    lora_stems.add(k[: -len(".lora_B.weight")])
-            matched = sum(1 for s in lora_stems if s in key_map)
-            unmatched = sorted(lora_stems - set(key_map.keys()))
-            _log(f"LoRA key map sniff: {matched}/{len(lora_stems)} stems resolvable")
-            if unmatched:
-                _log(f"LoRA stems comfy won't match (first 5): {unmatched[:5]}")
-
+            _check_lora_resolves(m, lora_sd)
             m, _ = comfy.sd.load_lora_for_models(m, None, lora_sd, float(adapter_strength), 0.0)
-            _log("LoRA applied")
+            log(f"LoRA applied ({len(lora_sd) // 2} pairs at strength {adapter_strength})")
 
-        _log(f"patching model_sampling shift={shift}, latent passthrough")
         patch_model_sampling(m, shift=shift)
         make_latent_passthrough(m)
-        if orthogonal_guidance > 0.0:
-            patch_orthogonal_cfg(m, orthogonal_guidance=orthogonal_guidance)
-            _log(f"orthogonal CFG hook installed (strength={orthogonal_guidance})")
+        patch_orthogonal_cfg(m, orthogonal_guidance=orthogonal_guidance)
         if clamp_denoised:
             patch_clamp_denoised(m)
-            _log("clamp_denoised hook installed (per-step Oklab gamut clamp on x0)")
-        _log("apply-adapter complete")
+        log("apply-adapter complete")
 
         return io.NodeOutput(m)
