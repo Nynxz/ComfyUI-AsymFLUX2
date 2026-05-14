@@ -84,14 +84,29 @@ class AsymFlux2PixelLatent(comfy.latent_formats.LatentFormat):
 
 
 def _safe_dtype_device(weight: torch.Tensor) -> tuple[torch.dtype, torch.device]:
-    """Use the base weight's dtype/device, but if the weight lives on a
-    ``meta`` device (staged / dynamic-VRAM loading), allocate the new
-    Linear on CPU — the patcher will migrate to the load device on first
-    forward. Never allocates on ``meta`` directly; that crashes."""
+    """Pick the dtype/device for the new Linear modules we install.
+
+    Two adjustments to ``weight.dtype`` / ``weight.device``:
+
+    - ``device='meta'`` (staged / dynamic-VRAM loading) falls back to
+      ``cpu``. The patcher migrates the layer to the load device on
+      first forward; allocating on ``meta`` directly would crash on
+      ``copy_``.
+    - Non-floating dtypes (e.g. ``uint8`` from GGUF-quantized bases) fall
+      back to ``bfloat16``. ``nn.Parameter`` only accepts floating/complex
+      dtypes; we couldn't put the adapter's float weights into a uint8
+      Linear anyway. bf16 is the typical FLUX.2 compute dtype and the
+      surrounding quantized layers dequantize to it at forward time.
+    """
     dev = weight.device
     if dev.type == "meta":
         dev = torch.device("cpu")
-    return weight.dtype, dev
+
+    dtype = weight.dtype
+    if not (dtype.is_floating_point or dtype.is_complex):
+        dtype = torch.bfloat16
+
+    return dtype, dev
 
 
 def _new_linear_from(weight: torch.Tensor, dtype: torch.dtype, device: torch.device) -> nn.Linear:
@@ -163,8 +178,14 @@ def apply_asymflux2_surgery(
     ``model_patcher``. The base ``model.diffusion_model`` is NOT mutated —
     everything is reverted automatically when ``unpatch_model`` runs."""
     diffusion_model = model_patcher.model.diffusion_model
-    dtype, device = _safe_dtype_device(diffusion_model.img_in.weight)
-    log(f"surgery: base dtype={dtype}, target device={device}")
+    base_w = diffusion_model.img_in.weight
+    dtype, device = _safe_dtype_device(base_w)
+    if dtype != base_w.dtype:
+        log(
+            f"surgery: base dtype={base_w.dtype} not usable for nn.Linear "
+            f"(quantized?); installing new Linears as {dtype} instead"
+        )
+    log(f"surgery: target dtype={dtype}, device={device}")
 
     p = model_patcher.add_object_patch
     dm = "diffusion_model"
