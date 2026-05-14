@@ -85,18 +85,24 @@ and the AsymFLUX.2-klein license on Hugging Face first.
 
 Mirroring the upstream Gradio defaults:
 
-- **Sampler**: `euler` (most reliable; see note below)
+- **Sampler**: `dpmpp_2m_sde` (see note below)
 - **Scheduler**: `simple`
 - **Steps**: 38 (range 4–50)
 - **CFG**: 4.0
 - **Resolution**: 960 × 1280 (snapped to multiples of 16)
 
-> **Sampler choice:** the upstream pipeline uses `UniPCMultistep`, but
-> ComfyUI's stock `uni_pc` builds its multistep polynomial directly from
-> the sigma schedule and can go singular with the high static shift
-> (17.0) AsymFLUX.2 uses — `torch.linalg.solve` raises `singular matrix`.
-> Use `euler` until we ship a custom sampler that mirrors LakonLab's
-> `FlowAdapterScheduler` wrapping. `dpmpp_2m` and `deis` also work.
+> **Sampler choice:** the upstream pipeline uses `UniPCMultistep`, which
+> is algorithmically the same as comfy's `uni_pc`. But our pipeline ships
+> two post-CFG hooks (orthogonal CFG and the Oklab gamut clamp) — the
+> clamp is a hard nonlinearity (`x.clamp(-1, 1)` in RGB space) that puts
+> a kink in `denoised(sigma)`. UniPC's multistep polynomial extrapolation
+> chokes on that kink: history points stop being valid predictors and
+> the BH update overshoots → poor output. SDE variants
+> (`dpmpp_2m_sde`, `dpmpp_sde`) inject noise per step which averages
+> over the kink and gives clean output. Use `dpmpp_2m_sde` + `simple`.
+> If you want to A/B vs `uni_pc`, also flip the `clamp_denoised` toggle
+> off on the Apply Adapter node to remove the kink and `uni_pc` will
+> behave again.
 
 Note: the Apply Adapter node currently sets a static `flux-shift = 17`.
 The upstream pipeline uses a **dynamic** shift between `ln(17)` and `ln(34)`
