@@ -104,6 +104,9 @@ def _new_linear_from(
     return new
 
 
+_ASYMFLUX2_FWD_MARK = "__asymflux2_wrapped_forward__"
+
+
 def _make_asymflux2_forward(
     diffusion_model,
     proj_buffer: torch.Tensor,
@@ -111,10 +114,21 @@ def _make_asymflux2_forward(
     sigma_min: float = 1e-4,
 ):
     """Build the wrapped forward closure that runs AsymFlow calibration
-    around the original ``Flux.forward``. We capture ``original_forward``
-    by closure rather than reading ``self.forward`` so we don't recurse
-    after the patch is installed."""
-    original_forward = diffusion_model.forward
+    around the original ``Flux.forward``.
+
+    CRITICAL: capture the *class-level* ``forward`` (bound to this
+    instance), NOT ``diffusion_model.forward``. If a previous Apply
+    Adapter run's patch is still installed at the moment surgery is
+    called again, ``diffusion_model.forward`` would be the PREVIOUS
+    wrapper -- closing over it would stack wrappers on every re-run,
+    inflate memory by ~80 MB per generation, and degrade output quality
+    each iteration. The class attribute is always the pristine
+    ``Flux.forward`` (which itself dispatches through
+    ``comfy.patcher_extension.WrapperExecutor`` to ``_forward``, so
+    we don't lose the wrapper-system features either).
+    """
+    cls = type(diffusion_model)
+    original_forward = cls.forward.__get__(diffusion_model, cls)
 
     def asymflux2_forward(
         self, x, timestep, context,
@@ -230,11 +244,11 @@ def apply_asymflux2_surgery(
     p(f"{dm}.sigma_min", 1e-4)
     _log(f"surgery: proj_buffer {tuple(proj_buf.shape)} + scale_buffer staged")
 
-    # 7. wrapped forward. Captures proj_buf / scale_buf by closure so the
-    # wrapper does not depend on the buffer-attrs we patched onto the
-    # diffusion model (those exist only while the patch is applied — the
-    # closure doesn't care).
+    # 7. wrapped forward. The closure captures `cls.forward.__get__(...)`
+    # (the class-level Flux.forward), so even if a previous patcher is
+    # still installed at this moment, we don't stack wrappers.
     fwd = _make_asymflux2_forward(diffusion_model, proj_buf, scale_buf, sigma_min=1e-4)
+    setattr(fwd, _ASYMFLUX2_FWD_MARK, True)
     p(f"{dm}.forward", MethodType(fwd, diffusion_model))
     _log("surgery: forward wrapped with AsymFlow calibration + velocity")
 

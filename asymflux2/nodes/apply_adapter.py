@@ -43,6 +43,13 @@ _DIFFUSERS_KEY_RENAMES = {
 }
 
 
+# Module-level cache for the adapter state dict. Comfy may re-execute
+# Apply Adapter when MODEL identity changes (model swap, dynamic-VRAM
+# reload, etc.). Without caching, every re-execution reads ~707 MB from
+# disk. Keyed by (path, mtime) so editing/replacing the file invalidates.
+_ADAPTER_CACHE: dict[tuple[str, float], dict[str, torch.Tensor]] = {}
+
+
 def _remap_diffusers_keys(k: str) -> str:
     for old, new in _DIFFUSERS_KEY_RENAMES.items():
         if old in k:
@@ -61,11 +68,24 @@ def _load_adapter_safetensors(path: str) -> dict[str, torch.Tensor]:
     on stock builds — both have been observed to segfault when the file
     sits on an external USB filesystem. We open it ourselves and call
     ``.clone()`` on every tensor to detach from any underlying mmap.
+
+    Result is cached by (path, mtime) so re-executions of the node only
+    pay the disk read once per Comfy session.
     """
+    import os
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    key = (path, mtime)
+    if key in _ADAPTER_CACHE:
+        return _ADAPTER_CACHE[key]
+
     sd: dict[str, torch.Tensor] = {}
     with safe_open(path, framework="pt", device="cpu") as f:
         for k in f.keys():
             sd[k] = f.get_tensor(k).clone()
+    _ADAPTER_CACHE[key] = sd
     return sd
 
 
@@ -179,7 +199,13 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
         clamp_denoised: bool,
     ) -> io.NodeOutput:
         adapter_path = folder_paths.get_full_path_or_raise("loras", adapter)
-        _log(f"loading adapter from {adapter_path}")
+        import os
+        try:
+            cache_key = (adapter_path, os.path.getmtime(adapter_path))
+        except OSError:
+            cache_key = (adapter_path, 0.0)
+        cache_hit = cache_key in _ADAPTER_CACHE
+        _log(f"loading adapter from {adapter_path}{' [CACHED]' if cache_hit else ''}")
         try:
             adapter_sd = _load_adapter_safetensors(adapter_path)
         except Exception as e:
