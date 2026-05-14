@@ -64,25 +64,25 @@ and AsymFLUX.2-klein licenses on Hugging Face.
 | `orthogonal_guidance` | `1.0` | Upstream `guidance_jit` strength. `0.0` = standard CFG. |
 | `clamp_denoised` | `True` | Per-step Oklab gamut clamp on the x0 estimate. |
 
-**KSampler:** demo defaults are `dpmpp_2m` + `simple`, 38 steps, CFG 4.0,
-at 960 × 1280. Other samplers worth trying: `dpmpp_2m_sde`, `dpmpp_sde`,
-`deis`. `uni_pc` is unstable with `clamp_denoised=True` (the gamut clip
-is a hard non-linearity that the multistep polynomial doesn't like) —
-turn the clamp off if you want to compare against `uni_pc`.
+**KSampler:** the example workflow ships `dpmpp_2m` + `simple`, 38 steps,
+CFG 4.0, at 960 × 1280. Other samplers worth trying: `dpmpp_2m_sde`,
+`dpmpp_sde`, `deis`. `uni_pc` produced bad output in our testing with
+`clamp_denoised=True`; if you want to compare against `uni_pc`, turn the
+clamp off on the Apply Adapter node.
 
 ## Known limitations
 
 - Output is close to the [HF Space](https://huggingface.co/spaces/Lakonik/AsymFLUX.2-klein)
-  but not identical. The base model + adapter + Oklab encode are the same;
-  the parts that diverge from upstream are:
+  but not identical. Known differences from upstream:
     - Static flow shift (we use `17` from the paper; upstream uses a
       resolution-dependent dynamic shift between `log(17)` and `log(34)`).
-      For 960 × 1280 the upstream value lands around `20`. Bigger gap at
-      higher resolutions.
-    - Sampler: upstream uses `UniPCMultistep` integrated by their
-      `FlowAdapterScheduler`. We use ComfyUI's stock samplers — comfy's
-      `uni_pc` is the same algorithm but interacts badly with our
-      post-CFG hooks, so we route around it.
+      For 960 × 1280 the upstream value lands around `20`. The gap
+      widens at higher resolutions.
+    - Sampler. Upstream uses `UniPCMultistep` integrated by its
+      `FlowAdapterScheduler`. We default to `dpmpp_2m` because that's
+      what produced the best output in our testing with ComfyUI's
+      stock samplers — not because we know it's algorithmically
+      equivalent to upstream.
 - Image-editing / reference-image conditioning isn't supported. The
   upstream `image=` kwarg on `PixelFlux2KleinPipeline.__call__` is
   plumbing inherited from `Flux2KleinPipeline`; output quality on
