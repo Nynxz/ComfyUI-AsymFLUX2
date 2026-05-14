@@ -11,11 +11,9 @@
       "order": 0,
       "mode": 0,
       "inputs": [],
-      "outputs": [
-        { "name": "MODEL", "type": "MODEL", "links": [1] }
-      ],
+      "outputs": [{ "name": "MODEL", "type": "MODEL", "links": [1] }],
       "properties": { "Node name for S&R": "UNETLoader" },
-      "widgets_values": ["flux2-klein-base-9b.safetensors", "default"]
+      "widgets_values": ["flux-2-klein-base-9b.safetensors", "default"]
     },
     {
       "id": 2,
@@ -25,12 +23,8 @@
       "flags": {},
       "order": 3,
       "mode": 0,
-      "inputs": [
-        { "name": "model", "type": "MODEL", "link": 1 }
-      ],
-      "outputs": [
-        { "name": "model", "type": "MODEL", "links": [2] }
-      ],
+      "inputs": [{ "name": "model", "type": "MODEL", "link": 1 }],
+      "outputs": [{ "name": "model", "type": "MODEL", "links": [2] }],
       "properties": {},
       "widgets_values": ["asymflux2-klein-9b.safetensors", 17.0, 1.0, 1.0, true]
     },
@@ -43,11 +37,9 @@
       "order": 1,
       "mode": 0,
       "inputs": [],
-      "outputs": [
-        { "name": "CLIP", "type": "CLIP", "links": [3, 8] }
-      ],
+      "outputs": [{ "name": "CLIP", "type": "CLIP", "links": [3, 8] }],
       "properties": {},
-      "widgets_values": ["qwen3_8b.safetensors", "flux2", "default"]
+      "widgets_values": ["qwen_3_8b.safetensors", "flux2", "default"]
     },
     {
       "id": 4,
@@ -57,14 +49,14 @@
       "flags": {},
       "order": 4,
       "mode": 0,
-      "inputs": [
-        { "name": "clip", "type": "CLIP", "link": 3 }
-      ],
+      "inputs": [{ "name": "clip", "type": "CLIP", "link": 3 }],
       "outputs": [
         { "name": "CONDITIONING", "type": "CONDITIONING", "links": [4] }
       ],
       "properties": {},
-      "widgets_values": ["Restored color photo from the 1900s. A middle-aged man with cybernetic metal hands is sitting on an old wooden chair and reading the newspaper. The newspaper has the prominent headline \"AsymFLOW RELEASED\" in large bold font. Close-up shot focusing on the newspaper."]
+      "widgets_values": [
+        "Restored color photo from the 1900s. A middle-aged man with cybernetic metal hands is sitting on an old wooden chair and reading the newspaper. The newspaper has the prominent headline \"AsymFLOW RELEASED\" in large bold font. Close-up shot focusing on the newspaper."
+      ]
     },
     {
       "id": 5,
@@ -74,14 +66,14 @@
       "flags": {},
       "order": 5,
       "mode": 0,
-      "inputs": [
-        { "name": "clip", "type": "CLIP", "link": 8 }
-      ],
+      "inputs": [{ "name": "clip", "type": "CLIP", "link": 8 }],
       "outputs": [
         { "name": "CONDITIONING", "type": "CONDITIONING", "links": [5] }
       ],
       "properties": {},
-      "widgets_values": ["Low quality, worst quality, blurry, deformed, bad anatomy, unclear text"]
+      "widgets_values": [
+        "Low quality, worst quality, blurry, deformed, bad anatomy, unclear text"
+      ]
     },
     {
       "id": 6,
@@ -92,9 +84,7 @@
       "order": 2,
       "mode": 0,
       "inputs": [],
-      "outputs": [
-        { "name": "latent", "type": "LATENT", "links": [6] }
-      ],
+      "outputs": [{ "name": "latent", "type": "LATENT", "links": [6] }],
       "properties": {},
       "widgets_values": [960, 1280, 1]
     },
@@ -112,11 +102,9 @@
         { "name": "negative", "type": "CONDITIONING", "link": 5 },
         { "name": "latent_image", "type": "LATENT", "link": 6 }
       ],
-      "outputs": [
-        { "name": "LATENT", "type": "LATENT", "links": [7] }
-      ],
+      "outputs": [{ "name": "LATENT", "type": "LATENT", "links": [7] }],
       "properties": {},
-      "widgets_values": [42, "fixed", 38, 4.0, "dpmpp_2m", "simple", 1.0]
+      "widgets_values": [42, "fixed", 20, 4.0, "uni_pc", "simple", 1.0]
     },
     {
       "id": 8,
@@ -126,12 +114,8 @@
       "flags": {},
       "order": 7,
       "mode": 0,
-      "inputs": [
-        { "name": "latent", "type": "LATENT", "link": 7 }
-      ],
-      "outputs": [
-        { "name": "image", "type": "IMAGE", "links": [9] }
-      ],
+      "inputs": [{ "name": "latent", "type": "LATENT", "link": 7 }],
+      "outputs": [{ "name": "image", "type": "IMAGE", "links": [9] }],
       "properties": {},
       "widgets_values": [0.56, 0.0, 0.01, 0.16]
     },
@@ -143,9 +127,7 @@
       "flags": {},
       "order": 8,
       "mode": 0,
-      "inputs": [
-        { "name": "images", "type": "IMAGE", "link": 9 }
-      ],
+      "inputs": [{ "name": "images", "type": "IMAGE", "link": 9 }],
       "outputs": [],
       "properties": {},
       "widgets_values": ["AsymFLUX2"]

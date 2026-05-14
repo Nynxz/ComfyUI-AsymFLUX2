@@ -64,11 +64,14 @@ and AsymFLUX.2-klein licenses on Hugging Face.
 | `orthogonal_guidance` | `1.0` | Upstream `guidance_jit` strength. `0.0` = standard CFG. |
 | `clamp_denoised` | `True` | Per-step Oklab gamut clamp on the x0 estimate. |
 
-**KSampler:** the example workflow ships `dpmpp_2m` + `simple`, 38 steps,
-CFG 4.0, at 960 × 1280. Other samplers worth trying: `dpmpp_2m_sde`,
-`dpmpp_sde`, `deis`. `uni_pc` produced bad output in our testing with
-`clamp_denoised=True`; if you want to compare against `uni_pc`, turn the
-clamp off on the Apply Adapter node.
+**KSampler:** the example workflow ships `uni_pc` + `simple`, **20 steps**,
+CFG 4.0, at 960 × 1280. UniPC is a multistep solver — its per-step
+quality is high enough that 15-25 steps generally matches what a
+single-step solver does at 30-50. Pushing it much past ~25 steps tends
+to degrade output because the per-step `clamp_denoised` non-linearity
+compounds in the multistep polynomial extrapolation. If you want to
+try other samplers: `dpmpp_2m` and `dpmpp_2m_sde` at 30-50 steps,
+`deis` at 20-30, all with `simple` scheduler.
 
 ## Known limitations
 
@@ -79,10 +82,13 @@ clamp off on the Apply Adapter node.
       For 960 × 1280 the upstream value lands around `20`. The gap
       widens at higher resolutions.
     - Sampler. Upstream uses `UniPCMultistep` integrated by its
-      `FlowAdapterScheduler`. We default to `dpmpp_2m` because that's
-      what produced the best output in our testing with ComfyUI's
-      stock samplers — not because we know it's algorithmically
-      equivalent to upstream.
+      `FlowAdapterScheduler`. We default to `uni_pc` at 20 steps —
+      comfy's port of the same algorithm — which should track upstream
+      closely. The remaining difference is mostly that comfy's
+      `uni_pc` runs through a generic-denoised path rather than
+      diffusers' `prediction_type='flow_prediction'` route; they're
+      mathematically equivalent for our model_sampling but the code
+      path is different.
 - Image-editing / reference-image conditioning isn't supported. The
   upstream `image=` kwarg on `PixelFlux2KleinPipeline.__call__` is
   plumbing inherited from `Flux2KleinPipeline`; output quality on
