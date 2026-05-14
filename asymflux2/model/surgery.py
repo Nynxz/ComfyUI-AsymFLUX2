@@ -124,9 +124,24 @@ def _make_asymflux2_forward(
         k_x = cal.k.reshape(-1, 1, 1, 1).to(dtype=x.dtype, device=x.device)
         x_scaled = x * k_x
         cal_t = cal.timestep.to(dtype=timestep.dtype, device=timestep.device)
+
+        # Image-editing path: upstream divides reference tokens by `s`
+        # before they go through x_embedder. We do the equivalent in image
+        # space (linearity of patchify makes pre-scaling commutative with
+        # the rearrange). Comfy's flux2 `_forward` will then patchify and
+        # concat ref tokens at index-offset positions (`ref_index_scale=10`
+        # matches upstream's `_prepare_condition_latent_ids(scale=10)`).
+        if ref_latents:
+            s_val = float(s_dev.detach().to(torch.float32).item())
+            ref_latents_scaled = [
+                r.to(device=x.device, dtype=x.dtype) / s_val for r in ref_latents
+            ]
+        else:
+            ref_latents_scaled = ref_latents
+
         u_a = original_forward(
             x_scaled, cal_t, context,
-            y=y, guidance=guidance, ref_latents=ref_latents,
+            y=y, guidance=guidance, ref_latents=ref_latents_scaled,
             control=control, transformer_options=transformer_options, **kwargs,
         )
         v = asymflow_velocity(

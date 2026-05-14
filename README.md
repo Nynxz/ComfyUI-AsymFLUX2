@@ -20,8 +20,29 @@ CLIPLoader (Qwen3 8B, type=flux2)  ─►  CLIPTextEncode (pos / neg)  ───
                                   AsymFLUX2 Empty Pixel Latent  ───────────────────────┘
 ```
 
-A working workflow lives at
-[`example_workflows/asymflux2_t2i.json`](example_workflows/asymflux2_t2i.json).
+Working workflows:
+
+- [`example_workflows/asymflux2_t2i.json`](example_workflows/asymflux2_t2i.json) — text-to-image.
+- [`example_workflows/asymflux2_edit.json`](example_workflows/asymflux2_edit.json) — image editing (FLUX-Kontext-style: a reference image conditions the generation, sampling still starts from pure noise).
+
+## Image editing
+
+```
+LoadImage ─► AsymFLUX2 Oklab Encode ─► ReferenceLatent ─► (positive) CLIPTextEncode ─► KSampler.positive
+                                              ▲
+                                              │  (positive CONDITIONING from CLIPTextEncode also goes in here)
+
+                  (negative) CLIPTextEncode ────────────────────────────────────────► KSampler.negative
+                  AsymFLUX2 Empty Pixel Latent ───────────────────────────────────── ► KSampler.latent_image
+```
+
+Two things to know:
+
+- **Use `ReferenceLatent` (ships with comfy** at `advanced/conditioning/edit_models/`**).** Your encoded image goes into the `latent` socket; your `CLIPTextEncode` positive output goes into the `conditioning` socket; the result is a CONDITIONING with the reference attached. Wire that into KSampler.positive.
+- **`KSampler.latent_image` stays as the empty pixel latent.** This is *not* img2img — sampling starts from pure noise, conditioned on (text + reference image). The reference image flows in through the conditioning, never through the latent_image socket.
+- **Don't put the reference on the negative branch.** Only positive.
+
+Behind the scenes our forward wrapper divides the reference tokens by ``s`` (the AsymFlow scale_buffer, ~2.4375) before they reach `x_embedder`, matching the upstream `_AsymFlux2Transformer2DModel.forward`. ComfyUI's stock flux2 path then handles patchifying + index-offset position IDs (`ref_index_scale=10` matches upstream's `_prepare_condition_latent_ids(scale=10)` for free).
 
 ## Nodes
 
