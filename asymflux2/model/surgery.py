@@ -55,6 +55,12 @@ from .asymflow import (
     asymflow_calibration,
     asymflow_velocity,
 )
+from ..oklab_math import decode_oklab_to_image, encode_image_to_oklab
+
+
+# Lakonik AsymFLUX.2-klein default Oklab encoder settings (see demo).
+_OKLAB_MEAN = (0.56, 0.0, 0.01)
+_OKLAB_STD = 0.16
 
 
 class AsymFlux2PixelLatent(comfy.latent_formats.LatentFormat):
@@ -292,6 +298,35 @@ def patch_orthogonal_cfg(model_patcher, orthogonal_guidance: float) -> None:
         return out
 
     model_patcher.set_model_sampler_post_cfg_function(orthog_cfg)
+
+
+def patch_clamp_denoised(model_patcher) -> None:
+    """Per-step Oklab gamut clamp on the x0 estimate.
+
+    Upstream ``clamp_denoised=True`` default: at every sampling step the
+    predicted x0 is decoded to sRGB, clipped to ``[-1, 1]`` to stay
+    in-gamut, then re-encoded back to Oklab. Without this the predicted
+    x0 can drift out of the valid color space, and small per-step errors
+    compound over 38 steps into oversaturated / washed-out output.
+
+    Implemented as a post-CFG hook, so it composes correctly with our
+    orthogonal CFG hook (both operate on the same ``denoised`` x0 the
+    sampler then converts back to velocity for the integration step).
+    """
+    def clamp_hook(args):
+        denoised = args["denoised"]
+        # Cast to fp32 for the color math; the Oklab matrices and pow(1/3)
+        # are sensitive to bf16 roundoff and the cost is trivial.
+        d_f32 = denoised.float()
+        img = decode_oklab_to_image(d_f32, affine_mean=_OKLAB_MEAN, affine_std=_OKLAB_STD)
+        img = img.clamp(-1.0, 1.0)
+        clamped = encode_image_to_oklab(img, affine_mean=_OKLAB_MEAN, affine_std=_OKLAB_STD)
+        clamped = clamped.to(denoised.dtype)
+        if not torch.isfinite(clamped).all():
+            return denoised
+        return clamped
+
+    model_patcher.set_model_sampler_post_cfg_function(clamp_hook)
 
 
 def patch_model_sampling(model_patcher, shift: float = 17.0) -> None:

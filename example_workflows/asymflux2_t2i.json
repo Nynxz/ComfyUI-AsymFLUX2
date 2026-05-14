@@ -32,7 +32,7 @@
         { "name": "model", "type": "MODEL", "links": [2] }
       ],
       "properties": {},
-      "widgets_values": ["asymflux2-klein-9b.safetensors", 17.0, 1.0, 1.0]
+      "widgets_values": ["asymflux2-klein-9b.safetensors", 17.0, 1.0, 1.0, true]
     },
     {
       "id": 3,

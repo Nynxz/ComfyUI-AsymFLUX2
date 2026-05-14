@@ -24,6 +24,7 @@ from safetensors import safe_open
 from ..model.surgery import (
     apply_asymflux2_surgery,
     make_latent_passthrough,
+    patch_clamp_denoised,
     patch_model_sampling,
     patch_orthogonal_cfg,
 )
@@ -148,6 +149,19 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
                         "looks oversharpened."
                     ),
                 ),
+                io.Boolean.Input(
+                    "clamp_denoised",
+                    default=True,
+                    tooltip=(
+                        "Per-step Oklab gamut clamp on the x0 estimate "
+                        "(upstream `clamp_denoised=True` default). At "
+                        "every step the predicted x0 is decoded to RGB, "
+                        "clipped to [-1, 1], and re-encoded back to "
+                        "Oklab. Prevents x0 drift out of valid color "
+                        "space; expect noticeably better color "
+                        "stability and slightly sharper output."
+                    ),
+                ),
             ],
             outputs=[
                 io.Model.Output(display_name="model"),
@@ -162,6 +176,7 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
         shift: float,
         adapter_strength: float,
         orthogonal_guidance: float,
+        clamp_denoised: bool,
     ) -> io.NodeOutput:
         adapter_path = folder_paths.get_full_path_or_raise("loras", adapter)
         _log(f"loading adapter from {adapter_path}")
@@ -232,6 +247,9 @@ class AsymFlux2ApplyAdapter(io.ComfyNode):
         if orthogonal_guidance > 0.0:
             patch_orthogonal_cfg(m, orthogonal_guidance=orthogonal_guidance)
             _log(f"orthogonal CFG hook installed (strength={orthogonal_guidance})")
+        if clamp_denoised:
+            patch_clamp_denoised(m)
+            _log("clamp_denoised hook installed (per-step Oklab gamut clamp on x0)")
         _log("apply-adapter complete")
 
         return io.NodeOutput(m)
