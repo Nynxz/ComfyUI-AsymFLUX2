@@ -83,22 +83,29 @@ class AsymFlux2PixelLatent(comfy.latent_formats.LatentFormat):
         return latent
 
 
-def _safe_dtype_device(weight: torch.Tensor) -> tuple[torch.dtype, torch.device]:
+def _safe_dtype_device(
+    weight: torch.Tensor,
+    prefer_device: torch.device | None = None,
+) -> tuple[torch.dtype, torch.device]:
     """Pick the dtype/device for the new Linear modules we install.
 
-    Two adjustments to ``weight.dtype`` / ``weight.device``:
+    Adjustments to ``weight.dtype`` / ``weight.device``:
 
-    - ``device='meta'`` (staged / dynamic-VRAM loading) falls back to
-      ``cpu``. The patcher migrates the layer to the load device on
-      first forward; allocating on ``meta`` directly would crash on
-      ``copy_``.
+    - ``prefer_device`` (typically ``model_patcher.load_device``) takes
+      priority when supplied. Under GGUF + staged / dynamic-VRAM loading
+      the base weight can be on CPU at surgery time even though the
+      inference device is CUDA, and the patcher's weight-migration path
+      doesn't always pick up modules we install via ``add_object_patch``.
+      Pre-allocating on the load device avoids the mismatch entirely.
+    - ``device='meta'`` falls back to ``cpu`` (allocating directly on
+      meta crashes on ``copy_``); the forward wrapper has a defensive
+      migrate-on-call check that catches anything that still ends up
+      misplaced.
     - Non-floating dtypes (e.g. ``uint8`` from GGUF-quantized bases) fall
       back to ``bfloat16``. ``nn.Parameter`` only accepts floating/complex
-      dtypes; we couldn't put the adapter's float weights into a uint8
-      Linear anyway. bf16 is the typical FLUX.2 compute dtype and the
-      surrounding quantized layers dequantize to it at forward time.
+      dtypes; surrounding quantized layers dequantize to bf16 at forward.
     """
-    dev = weight.device
+    dev = prefer_device if prefer_device is not None else weight.device
     if dev.type == "meta":
         dev = torch.device("cpu")
 
@@ -142,6 +149,17 @@ def _make_asymflux2_forward(proj_buffer: torch.Tensor, scale_buffer: torch.Tenso
     ):
         if transformer_options is None:
             transformer_options = {}
+
+        # Defensive: under GGUF + staged loading the patcher's weight-
+        # migration path doesn't always pull our installed Linears onto
+        # the inference device. Migrate any that are out of place. This
+        # is a no-op on the second+ call -- nn.Module.to() is in-place.
+        target_dev = x.device
+        if self.img_in.weight.device != target_dev:
+            self.img_in.to(target_dev)
+            self.final_layer.linear.to(target_dev)
+            self.final_layer.adaLN_modulation[1].to(target_dev)
+
         # Re-resolve the original Flux.forward from the class on every
         # call — robust to surgery re-runs, idempotent under patch stacks.
         cls = self.__class__
@@ -179,7 +197,8 @@ def apply_asymflux2_surgery(
     everything is reverted automatically when ``unpatch_model`` runs."""
     diffusion_model = model_patcher.model.diffusion_model
     base_w = diffusion_model.img_in.weight
-    dtype, device = _safe_dtype_device(base_w)
+    load_device = getattr(model_patcher, "load_device", None)
+    dtype, device = _safe_dtype_device(base_w, prefer_device=load_device)
     if dtype != base_w.dtype:
         log(
             f"surgery: base dtype={base_w.dtype} not usable for nn.Linear "
