@@ -1,0 +1,169 @@
+{
+  "last_node_id": 9,
+  "last_link_id": 9,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "UNETLoader",
+      "pos": [40, 40],
+      "size": [320, 90],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        { "name": "MODEL", "type": "MODEL", "links": [1] }
+      ],
+      "properties": { "Node name for S&R": "UNETLoader" },
+      "widgets_values": ["flux2-klein-base-9b.safetensors", "default"]
+    },
+    {
+      "id": 2,
+      "type": "asymflux2.ApplyAdapter",
+      "pos": [400, 40],
+      "size": [380, 160],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        { "name": "model", "type": "MODEL", "link": 1 }
+      ],
+      "outputs": [
+        { "name": "model", "type": "MODEL", "links": [2] }
+      ],
+      "properties": {},
+      "widgets_values": ["asymflux2-klein-9b.safetensors", 17.0, 1.0, 1.0]
+    },
+    {
+      "id": 3,
+      "type": "CLIPLoader",
+      "pos": [40, 180],
+      "size": [320, 110],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        { "name": "CLIP", "type": "CLIP", "links": [3, 8] }
+      ],
+      "properties": {},
+      "widgets_values": ["qwen3_8b.safetensors", "flux2", "default"]
+    },
+    {
+      "id": 4,
+      "type": "CLIPTextEncode",
+      "pos": [400, 220],
+      "size": [380, 200],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        { "name": "clip", "type": "CLIP", "link": 3 }
+      ],
+      "outputs": [
+        { "name": "CONDITIONING", "type": "CONDITIONING", "links": [4] }
+      ],
+      "properties": {},
+      "widgets_values": ["Restored color photo from the 1900s. A middle-aged man with cybernetic metal hands is sitting on an old wooden chair and reading the newspaper. The newspaper has the prominent headline \"AsymFLOW RELEASED\" in large bold font. Close-up shot focusing on the newspaper."]
+    },
+    {
+      "id": 5,
+      "type": "CLIPTextEncode",
+      "pos": [400, 440],
+      "size": [380, 130],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        { "name": "clip", "type": "CLIP", "link": 8 }
+      ],
+      "outputs": [
+        { "name": "CONDITIONING", "type": "CONDITIONING", "links": [5] }
+      ],
+      "properties": {},
+      "widgets_values": ["Low quality, worst quality, blurry, deformed, bad anatomy, unclear text"]
+    },
+    {
+      "id": 6,
+      "type": "asymflux2.EmptyPixelLatent",
+      "pos": [40, 350],
+      "size": [320, 110],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        { "name": "latent", "type": "LATENT", "links": [6] }
+      ],
+      "properties": {},
+      "widgets_values": [960, 1280, 1]
+    },
+    {
+      "id": 7,
+      "type": "KSampler",
+      "pos": [800, 40],
+      "size": [330, 480],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        { "name": "model", "type": "MODEL", "link": 2 },
+        { "name": "positive", "type": "CONDITIONING", "link": 4 },
+        { "name": "negative", "type": "CONDITIONING", "link": 5 },
+        { "name": "latent_image", "type": "LATENT", "link": 6 }
+      ],
+      "outputs": [
+        { "name": "LATENT", "type": "LATENT", "links": [7] }
+      ],
+      "properties": {},
+      "widgets_values": [42, "fixed", 38, 4.0, "dpmpp_2m", "simple", 1.0]
+    },
+    {
+      "id": 8,
+      "type": "asymflux2.OklabDecode",
+      "pos": [1150, 40],
+      "size": [320, 200],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        { "name": "latent", "type": "LATENT", "link": 7 }
+      ],
+      "outputs": [
+        { "name": "image", "type": "IMAGE", "links": [9] }
+      ],
+      "properties": {},
+      "widgets_values": [0.56, 0.0, 0.01, 0.16]
+    },
+    {
+      "id": 9,
+      "type": "SaveImage",
+      "pos": [1490, 40],
+      "size": [320, 290],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        { "name": "images", "type": "IMAGE", "link": 9 }
+      ],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": ["AsymFLUX2"]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "MODEL"],
+    [2, 2, 0, 7, 0, "MODEL"],
+    [3, 3, 0, 4, 0, "CLIP"],
+    [4, 4, 0, 7, 1, "CONDITIONING"],
+    [5, 5, 0, 7, 2, "CONDITIONING"],
+    [6, 6, 0, 7, 3, "LATENT"],
+    [7, 7, 0, 8, 0, "LATENT"],
+    [8, 3, 0, 5, 0, "CLIP"],
+    [9, 8, 0, 9, 0, "IMAGE"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

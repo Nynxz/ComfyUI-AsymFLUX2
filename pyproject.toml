@@ -1,0 +1,21 @@
+[project]
+name = "comfyui-asymflux2"
+version = "0.0.1"
+description = "Native ComfyUI v3 nodes for the pixel-space AsymFLUX.2-klein 9B model from LakonLab (Asymmetric Flow Models, arXiv 2605.12964)."
+authors = [{ name = "Nynxz", email = "contact@nynxz.com" }]
+requires-python = ">=3.10"
+classifiers = []
+dependencies = []
+
+
+[project.urls]
+Repository = "https://github.com/Nynxz/ComfyUI-AsymFLUX2"
+BugTracker = "https://github.com/Nynxz/ComfyUI-AsymFLUX2/issues"
+
+
+[tool.comfy]
+PublisherId = "nynxz"
+DisplayName = "AsymFLUX2"
+Icon = "https://avatars.githubusercontent.com/u/60878743?v=4"
+Tags = ["flux", "flux2", "asymflux", "pixel-space", "diffusion"]
+Repository = "https://github.com/Nynxz/ComfyUI-AsymFLUX2"
