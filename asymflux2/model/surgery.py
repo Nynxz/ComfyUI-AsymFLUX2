@@ -86,24 +86,29 @@ class AsymFlux2PixelLatent(comfy.latent_formats.LatentFormat):
 def _safe_dtype_device(
     weight: torch.Tensor,
     prefer_device: torch.device | None = None,
+    prefer_dtype: torch.dtype | None = None,
 ) -> tuple[torch.dtype, torch.device]:
     """Pick the dtype/device for the new Linear modules we install.
 
-    Adjustments to ``weight.dtype`` / ``weight.device``:
+    Adjustments:
 
     - ``prefer_device`` (typically ``model_patcher.load_device``) takes
       priority when supplied. Under GGUF + staged / dynamic-VRAM loading
       the base weight can be on CPU at surgery time even though the
-      inference device is CUDA, and the patcher's weight-migration path
-      doesn't always pick up modules we install via ``add_object_patch``.
-      Pre-allocating on the load device avoids the mismatch entirely.
+      inference device is CUDA; pre-allocating on the load device avoids
+      the mismatch.
     - ``device='meta'`` falls back to ``cpu`` (allocating directly on
-      meta crashes on ``copy_``); the forward wrapper has a defensive
-      migrate-on-call check that catches anything that still ends up
-      misplaced.
-    - Non-floating dtypes (e.g. ``uint8`` from GGUF-quantized bases) fall
-      back to ``bfloat16``. ``nn.Parameter`` only accepts floating/complex
-      dtypes; surrounding quantized layers dequantize to bf16 at forward.
+      meta crashes on ``copy_``); the forward wrapper migrates on the
+      first call as a safety net.
+    - For the dtype: when the base weight's dtype is non-floating
+      (e.g. ``uint8`` for GGUF-quantized bases), we have to substitute
+      a floating dtype because ``nn.Parameter`` only accepts those.
+      ``prefer_dtype`` (typically ``model.get_dtype_inference()`` — the
+      dtype comfy will cast inputs to during forward) is the right
+      substitute: it matches what the rest of the model computes in, so
+      our new Linears mesh with the surrounding quantized layers'
+      dequantized output without further casts. Falls back to bf16 if
+      no preference is supplied.
     """
     dev = prefer_device if prefer_device is not None else weight.device
     if dev.type == "meta":
@@ -111,7 +116,10 @@ def _safe_dtype_device(
 
     dtype = weight.dtype
     if not (dtype.is_floating_point or dtype.is_complex):
-        dtype = torch.bfloat16
+        if prefer_dtype is not None and (prefer_dtype.is_floating_point or prefer_dtype.is_complex):
+            dtype = prefer_dtype
+        else:
+            dtype = torch.bfloat16
 
     return dtype, dev
 
@@ -198,11 +206,19 @@ def apply_asymflux2_surgery(
     diffusion_model = model_patcher.model.diffusion_model
     base_w = diffusion_model.img_in.weight
     load_device = getattr(model_patcher, "load_device", None)
-    dtype, device = _safe_dtype_device(base_w, prefer_device=load_device)
+    # Ask the model what dtype it computes in -- matters when the base is
+    # quantized (uint8 GGUF, fp8, etc.) and our new Linears need to mesh
+    # with the inference cast dtype, not blindly fall back to bf16.
+    get_inf = getattr(model_patcher.model, "get_dtype_inference", None)
+    inference_dtype = get_inf() if callable(get_inf) else None
+    dtype, device = _safe_dtype_device(
+        base_w, prefer_device=load_device, prefer_dtype=inference_dtype,
+    )
     if dtype != base_w.dtype:
         log(
             f"surgery: base dtype={base_w.dtype} not usable for nn.Linear "
-            f"(quantized?); installing new Linears as {dtype} instead"
+            f"(quantized?); installing new Linears as {dtype} "
+            f"(model inference dtype={inference_dtype})"
         )
     log(f"surgery: target dtype={dtype}, device={device}")
 
