@@ -8,6 +8,8 @@ AsymFLUX.2 is from the *Asymmetric Flow Models* paper
 ships as an adapter on top of FLUX.2-klein — the transformer denoises a
 3-channel Oklab image directly instead of going through a VAE latent.
 
+![AsymFlux2 example](.github/assets/example.jpg)
+
 ## Workflow
 
 ```
