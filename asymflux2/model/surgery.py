@@ -202,7 +202,14 @@ def apply_asymflux2_surgery(
 ) -> None:
     """Register all AsymFLUX.2-specific changes as object patches on
     ``model_patcher``. The base ``model.diffusion_model`` is NOT mutated —
-    everything is reverted automatically when ``unpatch_model`` runs."""
+    everything is reverted automatically when ``unpatch_model`` runs.
+
+    The set of architectural deltas applied here (patch_size, in/out
+    channels, ``img_in`` / ``final_layer`` Linear shapes, adaLN ordering,
+    ``proj_buffer`` / ``scale_buffer`` registration) is derived from
+    https://github.com/Lakonik/LakonLab/blob/main/lakonlab/models/architectures/asymflow/asymflux2.py
+    (Copyright (c) 2026 Hansheng Chen, Apache License 2.0).
+    """
     diffusion_model = model_patcher.model.diffusion_model
     base_w = diffusion_model.img_in.weight
     load_device = getattr(model_patcher, "load_device", None)
@@ -283,6 +290,10 @@ def apply_asymflux2_surgery(
 
 def patch_orthogonal_cfg(model_patcher, orthogonal_guidance: float) -> None:
     """Upstream's velocity-space ``guidance_jit`` as a post-CFG hook.
+
+    The orthogonal-projection math is ported (with modifications) from
+    https://github.com/Lakonik/LakonLab/blob/main/lakonlab/models/diffusions/gaussian_flow.py
+    (``guidance_jit``, Copyright (c) 2026 Hansheng Chen, Apache License 2.0).
 
     Comfy gives us x0-space ``cond_denoised`` / ``uncond_denoised``. We
     reconstruct velocities via ``v = (x - x0) / sigma``, apply the

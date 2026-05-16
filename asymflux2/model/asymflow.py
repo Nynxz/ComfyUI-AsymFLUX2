@@ -1,3 +1,6 @@
+# Math derived (with modifications) from:
+#   https://github.com/Lakonik/LakonLab/blob/main/lakonlab/models/architectures/asymflow/common.py
+#   Copyright (c) 2026 Hansheng Chen, Apache License 2.0
 """AsymFlow calibration + velocity math.
 
 Port of ``lakonlab/models/architectures/asymflow/common.py`` (``AsymFlowMixin``)

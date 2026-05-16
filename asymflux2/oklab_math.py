@@ -1,3 +1,8 @@
+# Math derived (with modifications) from:
+#   https://github.com/Lakonik/LakonLab/blob/main/lakonlab/models/architectures/autoencoders/color_encoders.py
+#   Copyright (c) 2026 Hansheng Chen, Apache License 2.0
+# Oklab matrices: Bjorn Ottosson's public spec (https://bottosson.github.io/posts/oklab/)
+# sRGB conversion: IEC 61966-2-1
 """Pure-tensor port of LakonLab's OklabColorEncoder, used as the AsymFLUX2
 "VAE" — a deterministic perceptual-color transform between sRGB images and
 the 3-channel Oklab pixel-latent space the transformer denoises in.
