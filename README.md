@@ -122,3 +122,24 @@ have a synthetic-input unit test verifying they match the upstream
 LakonLab functions when run on the same tensors. The end-to-end output
 still depends on sampler choice, schedule discretization, and the static
 vs dynamic shift, so it's close to but not identical to the HF Space.
+
+## Citation & credits
+
+- [LakonLab](https://huggingface.co/Lakonik) — trained the AsymFLUX.2-klein
+  adapter and authored the reference [`lakonlab`](https://github.com/Lakonik/lakonlab)
+  implementation that this node pack reimplements against ComfyUI primitives.
+- [Black Forest Labs](https://huggingface.co/black-forest-labs) —
+  FLUX.2-klein base model.
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI) — host runtime.
+
+Original paper:
+
+```bibtex
+@article{chen2026asymmetric,
+  title={Asymmetric Flow Models},
+  author={Hansheng Chen and Jan Ackermann and Minseo Kim and Gordon Wetzstein and Leonidas Guibas},
+  journal={arXiv preprint arXiv:2605.12964},
+  url={https://arxiv.org/abs/2605.12964},
+  year={2026},
+}
+```
