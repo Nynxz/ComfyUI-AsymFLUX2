@@ -3,6 +3,7 @@ name = "comfyui-asymflux2"
 version = "0.0.1"
 description = "Native ComfyUI v3 nodes for the pixel-space AsymFLUX.2-klein 9B model from LakonLab (Asymmetric Flow Models, arXiv 2605.12964)."
 authors = [{ name = "Nynxz", email = "contact@nynxz.com" }]
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 classifiers = []
 dependencies = []
