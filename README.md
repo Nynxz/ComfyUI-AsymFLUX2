@@ -1,5 +1,13 @@
 # ComfyUI-AsymFLUX2
 
+> [!IMPORTANT]
+> **The original authors have released an official node pack:
+> [Lakonik/ComfyUI-piFlow](https://github.com/Lakonik/ComfyUI-piFlow).**
+> If you're just looking to run AsymFLUX.2 in ComfyUI, you should probably
+> install that instead — it's maintained by the people who trained the
+> model. This repo predates AsymFLUX.2 support landing in piFlow and stays
+> up as an alternative.
+
 ComfyUI nodes for running [AsymFLUX.2-klein](https://huggingface.co/Lakonik/AsymFLUX.2-klein-9B)
 in pixel space on top of a stock FLUX.2-klein-base-9B safetensors.
 
